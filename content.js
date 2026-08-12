@@ -150,22 +150,24 @@
     selection.addRange(range);
   }
 
-  // Inserts text the way a real user action would. Manually building a
-  // "beforeinput" InputEvent (the old approach) no longer works because
-  // Discord's current Slate editor relies on the browser-native
-  // getTargetRanges() data attached to *real* input events — a
-  // script-constructed InputEvent can't carry that, so it gets ignored.
+  // Inserts text the way a real paste would.
   //
-  // document.execCommand('insertText', ...) still produces a genuinely
-  // trusted, native input event, so it's tried first. A simulated paste
-  // event (which Slate also handles natively) is the fallback.
+  // Slate.js (Discord's editor) keeps its OWN internal model of the
+  // message text; the visible contenteditable DOM is just a rendering
+  // of that model. Anything that changes the DOM without going through
+  // Slate's own event handling (e.g. document.execCommand('insertText'))
+  // gets silently discarded the next time Slate re-renders — which is
+  // exactly the "text vanishes when you type or press Enter" bug.
+  //
+  // A 'paste' event is different: Slate has its own onPaste handler
+  // that reads event.clipboardData directly and feeds it into its
+  // internal model via its own insertData logic. That's true whether
+  // the paste event was triggered by a real Ctrl+V or, as here,
+  // constructed and dispatched by a script — the handler doesn't care,
+  // it just reads clipboardData. So this is the one method that
+  // actually updates Slate's state, not just the pixels on screen.
   function insertText(el, text) {
     focusAtEnd(el);
-
-    const before = el.textContent;
-    const inserted = !!(document.execCommand && document.execCommand('insertText', false, text));
-
-    if (inserted && el.textContent !== before) return;
 
     const dataTransfer = new DataTransfer();
     dataTransfer.setData('text/plain', text);
@@ -200,11 +202,12 @@
 
     insertText(inputBox, url);
 
-    // Wait a couple of paint cycles so Discord's React state has
-    // actually picked up the inserted text before pressing Enter —
-    // otherwise Enter can fire while the box still reads as empty.
+    // Wait a paint cycle plus a short buffer so Slate's onPaste
+    // handling has actually updated its internal state before pressing
+    // Enter — otherwise Enter can fire while the box still reads as
+    // empty (or mid-update).
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => pressEnter(inputBox));
+      setTimeout(() => pressEnter(inputBox), 20);
     });
   }
 
